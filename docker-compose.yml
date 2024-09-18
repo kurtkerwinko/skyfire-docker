@@ -1,0 +1,104 @@
+name: skyfire
+
+x-skyfire: &skyfire
+  image: skyfire:latest
+  pull_policy: never
+  environment: &skyfire-environment
+    DATABASE_HOST: database
+    DATABASE_USER: skyfire
+  env_file:
+    - path: ./skyfire.env
+      required: false
+  entrypoint: /root/setup.sh
+
+services:
+  database:
+    image: mysql:9.0.1
+    restart: unless-stopped
+    environment:
+      MYSQL_USER: skyfire
+      MYSQL_ROOT_PASSWORD: ${DATABASE_PASS}
+      MYSQL_PASSWORD: ${DATABASE_PASS}
+    healthcheck:
+      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
+      retries: 10
+      interval: 5s
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+      - ./database/init:/docker-entrypoint-initdb.d
+
+  # Skyfire servers
+  world-server:
+    <<: *skyfire
+    restart: unless-stopped
+    environment:
+      <<: *skyfire-environment
+      DATABASE_PASS: ${DATABASE_PASS}
+    ports:
+      - "${SKYFIRE_DOCKER_BIND_IP:-127.0.0.1}:8085:8085"
+      - "127.0.0.1:3443:3443" # RA port
+      - "127.0.0.1:7878:7878" # SOAP port
+    depends_on:
+      database:
+        condition: service_healthy
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./data/extractor/resources/db2:/usr/local/skyfire-server/bin/db2:ro
+      - ./data/extractor/resources/dbc:/usr/local/skyfire-server/bin/dbc:ro
+      - ./data/extractor/resources/maps:/usr/local/skyfire-server/bin/maps:ro
+      - ./data/extractor/resources/vmaps:/usr/local/skyfire-server/bin/vmaps:ro
+      - ./data/extractor/resources/cameras:/usr/local/skyfire-server/bin/cameras:ro
+      - ./data/extractor/resources/Buildings:/usr/local/skyfire-server/bin/Buildings:ro
+    command: ./worldserver
+
+  auth-server:
+    <<: *skyfire
+    restart: unless-stopped
+    environment:
+      <<: *skyfire-environment
+      DATABASE_PASS: ${DATABASE_PASS}
+    ports:
+      - "${SKYFIRE_DOCKER_BIND_IP:-127.0.0.1}:3724:3724"
+    depends_on:
+      database:
+        condition: service_healthy
+    command: ./authserver
+
+  # Tools
+  skyfire:
+    image: skyfire:latest
+    build:
+      context: skyfire
+      args:
+        GIT_SKYFIRE_REPO_COMMIT: ${GIT_SKYFIRE_REPO_COMMIT:-master}
+    profiles:
+      - tools
+
+  database-migrations:
+    <<: *skyfire
+    environment:
+      <<: *skyfire-environment
+      DATABASE_PASS: ${DATABASE_PASS}
+      DB_ARCHIVE_URL: ${DB_ARCHIVE_URL}
+      SKYFIRE_SERVER: ${SKYFIRE_PUBLIC_IP:-127.0.0.1}
+    stdin_open: true
+    tty: true
+    depends_on:
+      database:
+        condition: service_healthy
+    volumes:
+      - ./data/db-backups:/root/database/backups
+    profiles:
+      - tools
+      - tools-db
+    command: echo "COMMAND=/root/auto-migration.sh"
+
+  extractor:
+    <<: *skyfire
+    volumes:
+      - ./data/extractor:/extractor
+    profiles:
+      - tools
+      - tools-extractor
+    command: echo "COMMAND=/root/run-extractor.sh"
