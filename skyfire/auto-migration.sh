@@ -22,9 +22,9 @@ process_sql() {
 }
 
 import_sql_files() {
-    count=`ls -1 "$1" 2>/dev/null | wc -l`
+    count=`ls -1 $1 2>/dev/null | wc -l`
     if [ $count != 0 ]; then
-        for sqlfile in "$1"; do
+        for sqlfile in $1; do
             echo "Importing ${sqlfile}"
             process_sql --database=$2 < "${sqlfile}"
         done
